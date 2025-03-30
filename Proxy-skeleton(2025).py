@@ -121,12 +121,12 @@ while True:
     # ~~~~ INSERT CODE ~~~~
     response = ''.join(cacheData)
     clientSocket.sendall(response.encode('utf-8'))
-    cacheFile.close()
     clientSocket.close()
     # ~~~~ END CODE INSERT ~~~~
     cacheFile.close()
     print ('Sent to the client:')
-    print ('> ' + cacheData)
+    print ('> ' + response)
+    continue
   except:
     # cache miss.  Get resource from origin server
     originServerSocket = None
@@ -176,7 +176,6 @@ while True:
       # Get the response from the origin server
       # ~~~~ INSERT CODE ~~~~
       responseData = b''
-      originServerSocket.settimeout(5)
       while True:
         data = originServerSocket.recv(BUFFER_SIZE)
         if not data:
