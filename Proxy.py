@@ -4,6 +4,7 @@ import sys
 import os
 import argparse
 import re
+import time
 
 # 1MB buffer size
 BUFFER_SIZE = 1000000
@@ -103,7 +104,9 @@ while True:
 
   # Check if resource is in cache
   try:
-    cacheLocation = './' + hostname + resource
+    # Sanitize the resource path for filesystem use
+    safe_resource = re.sub(r'[<>:"/\\|?*]', '_', resource)
+    cacheLocation = './' + hostname + safe_resource
     if cacheLocation.endswith('/'):
         cacheLocation = cacheLocation + 'default'
 
@@ -181,6 +184,36 @@ while True:
         if not data:
           break
         responseData += data
+
+      # Split the headers from the body
+      header_end_index = responseData.find(b'\r\n\r\n')
+      header_bytes = responseData[:header_end_index]
+      body_bytes = responseData[header_end_index + 4:]
+
+      headers_text = header_bytes.decode('utf-8', errors='ignore')
+      status_line = headers_text.split('\r\n')[0]
+      print(f"[DEBUG] Status line: {status_line}")
+
+      # Check for max-age in Cache-Control
+      max_age = None
+      for line in headers_text.split('\r\n'):
+          if line.lower().startswith("cache-control:") and "max-age=" in line.lower():
+              match = re.search(r"max-age=(\d+)", line)
+              if match:
+                  max_age = int(match.group(1))
+                  print(f"[INFO] max-age found: {max_age} seconds")
+                  break
+
+      is_301 = '301' in status_line
+      is_302 = '302' in status_line
+
+      redirect_location = None
+      if is_301 or is_302:
+          for line in headers_text.split('\r\n'):
+              if line.lower().startswith('location:'):
+                  redirect_location = line.split(':', 1)[1].strip()
+                  print(f"[INFO] Redirect Location: {redirect_location}")
+                  break
       # ~~~~ END CODE INSERT ~~~~
 
       # Send the response to the client
@@ -195,9 +228,34 @@ while True:
         os.makedirs(cacheDir)
       cacheFile = open(cacheLocation, 'wb')
 
+      # Cache redirect responses appropriately
+      if is_301:
+          print("[INFO] Caching 301 redirect response")
+          cacheFile.write(responseData)
+          print('301 response cached')
+          # Save max-age metadata if applicable
+          if max_age is not None:
+              metaFile = open(cacheLocation + '.meta', 'w')
+              metaFile.write(f"{int(time.time())},{max_age}")
+              metaFile.close()
+              print(f"[INFO] Metadata saved at {cacheLocation + '.meta'}")          
+      elif is_302:
+          print("[INFO] 302 redirect received — not caching this response")
+          # Skip caching, just close and return
+          originServerSocket.close()
+          clientSocket.shutdown(socket.SHUT_WR)
+          print('client socket shutdown for writing')
+          continue  # Go to next request
+
       # Save origin server response in the cache file
       # ~~~~ INSERT CODE ~~~~
-      cacheFile.write(responseData)
+      else: # Cache everything except 302
+          cacheFile.write(responseData)
+          if max_age is not None:
+              metaFile = open(cacheLocation + '.meta', 'w')
+              metaFile.write(f"{int(time.time())},{max_age}")
+              metaFile.close()
+              print(f"[INFO] Metadata saved at {cacheLocation + '.meta'}") 
       # ~~~~ END CODE INSERT ~~~~
       cacheFile.close()
       print ('cache file closed')
